@@ -34,31 +34,54 @@ def extract_fields(text):
         'Education': re.search(r'Education\s+(.+)', text),
     }
 
-    address = {
-        'Division': re.search(r'Permanent Address Division\s+(.+)', text),
-        'District': re.search(r'District\s+(.+)', text),
-        'Upozila': re.search(r'Upozila\s+(.+)', text),
-        'Union_Ward': re.search(r'Union/Ward\s+(.+)', text),
-        'Mouza': re.search(r'Mouza/Moholla\s+(.+)', text),
-        'Village_Road': re.search(r'Village/Road\s+(.+)', text),
-        'Post_Office': re.search(r'Post Office\s+(.+)', text),
-        'Postal_Code': re.search(r'Postal Code\s+(\d+)', text),
-        'Region': re.search(r'Region\s+(.+)', text),
-    }
-
     data = {}
     for k, v in fields.items():
         data[k] = clean(v.group(1)) if v else None
 
-    data['Permanent_Address'] = {}
-    address_parts = []
+    # Extract Division with better logic
+    lines = text.splitlines()
+    division = None
+    for i, line in enumerate(lines):
+        if re.search(r'Permanent Address\s*Division', line, re.I):
+            parts = line.split(':')
+            if len(parts) > 1 and parts[1].strip():
+                division = parts[1].strip()
+            elif i + 1 < len(lines):
+                division = lines[i + 1].strip()
+            break
 
-    for k, v in address.items():
-        val = clean(v.group(1)) if v else None
-        data['Permanent_Address'][k] = val
-        if val:
-            address_parts.append(val)
+    address = {
+        'Division': division,
+        'District': None,
+        'Upozila': None,
+        'Union_Ward': None,
+        'Mouza': None,
+        'Village_Road': None,
+        'Post_Office': None,
+        'Postal_Code': None,
+        'Region': None,
+    }
 
+    # Regex for the other address fields (ignore Division here)
+    address_patterns = {
+        'District': r'District\s+(.+)',
+        'Upozila': r'Upozila\s+(.+)',
+        'Union_Ward': r'Union/Ward\s+(.+)',
+        'Mouza': r'Mouza/Moholla\s+(.+)',
+        'Village_Road': r'Village/Road\s+(.+)',
+        'Post_Office': r'Post Office\s+(.+)',
+        'Postal_Code': r'Postal Code\s+(\d+)',
+        'Region': r'Region\s+(.+)',
+    }
+
+    for key, pattern in address_patterns.items():
+        match = re.search(pattern, text)
+        address[key] = clean(match.group(1)) if match else None
+
+    data['Permanent_Address'] = address
+
+    # Construct full address by joining all available parts
+    address_parts = [v for v in address.values() if v]
     data['full_address'] = ', '.join(address_parts)
 
     return data
@@ -78,8 +101,9 @@ async def extract_pdf(pdf_file: UploadFile = File(...)):
     os.makedirs("images", exist_ok=True)
     pdf_path = f"uploads/{uid}.pdf"
 
+    content = await pdf_file.read()
     with open(pdf_path, "wb") as f:
-        f.write(await pdf_file.read())
+        f.write(content)
 
     doc = fitz.open(pdf_path)
     text = ""
@@ -103,27 +127,33 @@ async def extract_pdf(pdf_file: UploadFile = File(...)):
     doc.close()
     os.remove(pdf_path)
 
-    # Heuristic face and signature detection
+    # Debug: print extracted text length and sample
+    print(f"Extracted text length: {len(text)}")
+    print(f"Extracted text sample:\n{text[:500]}")  # first 500 chars
+
+    # Heuristic face and signature detection with logging
     classified = {"face_image": None, "signature_image": None}
     for img in image_paths:
         try:
             with Image.open(img) as im:
                 w, h = im.size
                 ratio = w / h
+                print(f"Image {img}: width={w}, height={h}, ratio={ratio:.2f}")
 
-                # Face: mostly square
-                if 0.8 < ratio < 1.3 and h > 120:
+                # Face heuristic: roughly square and tall enough
+                if 0.7 < ratio < 1.4 and h > 100:
                     if not classified["face_image"]:
                         classified["face_image"] = encode_image_base64(img)
 
-                # Signature: wide and short
-                elif ratio > 2.2 and 40 < h < 200:
+                # Signature heuristic: wide and relatively short
+                elif ratio > 2.0 and 30 < h < 220:
                     if not classified["signature_image"]:
                         classified["signature_image"] = encode_image_base64(img)
-        except:
+        except Exception as e:
+            print(f"Error processing image {img}: {e}")
             continue
 
-    # Fallback: last image as signature
+    # Fallback: last image as signature if none found
     if not classified["signature_image"] and len(image_paths) > 0:
         classified["signature_image"] = encode_image_base64(image_paths[-1])
 
