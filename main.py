@@ -26,7 +26,7 @@ def extract_fields(text):
         'Spouse_Name': re.search(r'Spouse Name\s+(.+)', text),
         'Religion': re.search(r'Religion\s+(.+)', text),
         'Dob': re.search(r'Date of Birth\s+(.+)', text),
-        'birth_place': re.search(r'Birth Place\s+(.+)', text),
+        'blood': re.search(r'Blood Group\s+(.+)', text),
         'Gender': re.search(r'Gender\s+(.+)', text),
         'Marital_Status': re.search(r'Marital\s+(.+)', text),
         'Occupation': re.search(r'Occupation\s+(.+)', text),
