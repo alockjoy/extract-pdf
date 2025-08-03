@@ -9,9 +9,9 @@ from PIL import Image
 app = FastAPI()
 
 # Base URL for accessing images publicly
-IMAGE_BASE_URL = "https://server.vvsdesignpipe.com/images"
+IMAGE_BASE_URL = "https://server.vvsdesignpipe.com/image"
 # Local folder where images are saved (make sure this folder is served by your web server)
-IMAGE_SAVE_DIR = "images"
+IMAGE_SAVE_DIR = "image"
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 
 
