@@ -5,10 +5,14 @@ import os
 import re
 import uuid
 from PIL import Image
-import base64
-from io import BytesIO
 
 app = FastAPI()
+
+# Base URL for accessing images publicly
+IMAGE_BASE_URL = "https://server.vvsdesignpipe.com/images"
+# Local folder where images are saved (make sure this folder is served by your web server)
+IMAGE_SAVE_DIR = "images"
+os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 
 
 def clean(text):
@@ -87,19 +91,14 @@ def extract_fields(text):
     return data
 
 
-def encode_image_base64(img_path):
-    with Image.open(img_path) as im:
-        buffered = BytesIO()
-        im.save(buffered, format="PNG")
-        return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-
 @app.post("/extract/")
 async def extract_pdf(pdf_file: UploadFile = File(...)):
     uid = str(uuid.uuid4())
-    os.makedirs("uploads", exist_ok=True)
-    os.makedirs("images", exist_ok=True)
-    pdf_path = f"uploads/{uid}.pdf"
+    pdf_dir = "uploads"
+    os.makedirs(pdf_dir, exist_ok=True)
+    os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
+
+    pdf_path = os.path.join(pdf_dir, f"{uid}.pdf")
 
     content = await pdf_file.read()
     with open(pdf_path, "wb") as f:
@@ -107,14 +106,16 @@ async def extract_pdf(pdf_file: UploadFile = File(...)):
 
     doc = fitz.open(pdf_path)
     text = ""
-    image_paths = []
+    image_urls = []
 
     for page_num, page in enumerate(doc):
         text += page.get_text()
         for i, img in enumerate(page.get_images(full=True)):
             xref = img[0]
             pix = fitz.Pixmap(doc, xref)
-            img_path = f"images/{uid}_page{page_num + 1}_img{i + 1}.png"
+            img_filename = f"{uid}_page{page_num + 1}_img{i + 1}.png"
+            img_path = os.path.join(IMAGE_SAVE_DIR, img_filename)
+
             if pix.n < 5:
                 pix.save(img_path)
             else:
@@ -122,40 +123,42 @@ async def extract_pdf(pdf_file: UploadFile = File(...)):
                 pix1.save(img_path)
                 pix1 = None
             pix = None
-            image_paths.append(img_path)
+
+            image_urls.append(f"{IMAGE_BASE_URL}/{img_filename}")
 
     doc.close()
     os.remove(pdf_path)
 
-    # Debug: print extracted text length and sample
+    # Debug (optional): print length of text and first 500 chars
     print(f"Extracted text length: {len(text)}")
-    print(f"Extracted text sample:\n{text[:500]}")  # first 500 chars
+    print(f"Extracted text sample:\n{text[:500]}")
 
-    # Heuristic face and signature detection with logging
-    classified = {"face_image": None, "signature_image": None}
-    for img in image_paths:
+    # Heuristic face and signature detection based on image sizes
+    classified = {"face_image_url": None, "signature_image_url": None}
+    for img_url in image_urls:
         try:
-            with Image.open(img) as im:
+            img_file = os.path.join(IMAGE_SAVE_DIR, os.path.basename(img_url))
+            with Image.open(img_file) as im:
                 w, h = im.size
                 ratio = w / h
-                print(f"Image {img}: width={w}, height={h}, ratio={ratio:.2f}")
+                print(f"Image {img_file}: width={w}, height={h}, ratio={ratio:.2f}")
 
                 # Face heuristic: roughly square and tall enough
                 if 0.7 < ratio < 1.4 and h > 100:
-                    if not classified["face_image"]:
-                        classified["face_image"] = encode_image_base64(img)
+                    if not classified["face_image_url"]:
+                        classified["face_image_url"] = img_url
 
                 # Signature heuristic: wide and relatively short
                 elif ratio > 2.0 and 30 < h < 220:
-                    if not classified["signature_image"]:
-                        classified["signature_image"] = encode_image_base64(img)
+                    if not classified["signature_image_url"]:
+                        classified["signature_image_url"] = img_url
         except Exception as e:
-            print(f"Error processing image {img}: {e}")
+            print(f"Error processing image {img_url}: {e}")
             continue
 
     # Fallback: last image as signature if none found
-    if not classified["signature_image"] and len(image_paths) > 0:
-        classified["signature_image"] = encode_image_base64(image_paths[-1])
+    if not classified["signature_image_url"] and len(image_urls) > 0:
+        classified["signature_image_url"] = image_urls[-1]
 
     result = extract_fields(text)
     result.update(classified)
